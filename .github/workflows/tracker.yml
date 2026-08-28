@@ -1,0 +1,40 @@
+name: oracle-tracker
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [tick, respawn]
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: oracle-session
+  cancel-in-progress: false
+
+jobs:
+  session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 245
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: install runner deps
+        run: pip install -r runner/requirements.txt
+
+      - name: run session (engine + showcase + respawn)
+        env:
+          ATHENA_TOKEN: ${{ secrets.ATHENA_TOKEN }}
+          HL_MASTER_ADDR: ${{ secrets.HL_MASTER_ADDR }}
+          HL_MASTER_SECRET: ${{ secrets.HL_MASTER_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+          SHOWCASE: "1"
+        run: python runner/main.py
