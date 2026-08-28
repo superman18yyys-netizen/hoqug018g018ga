@@ -133,15 +133,30 @@ def persist_state() -> None:
     staged = subprocess.run(
         ["git", "-C", ENGINE_DIR, "diff", "--cached", "--quiet"],
         capture_output=True).returncode != 0
-    if staged:
-        subprocess.run(["git", "-C", ENGINE_DIR, "commit", "-q", "-m",
-                        "state update"], env=env_git, check=True)
-        subprocess.run(
-            ["git", "-C", ENGINE_DIR, "push", "--quiet", "origin", "main"],
-            env=env_git, check=True)
-        log("[runner] ledger persisted to private repo")
-    else:
+    if not staged:
         log("[runner] ledger unchanged")
+        return
+    subprocess.run(["git", "-C", ENGINE_DIR, "commit", "-q", "-m",
+                    "state update"], env=env_git, check=True)
+    for attempt in range(3):
+        push = subprocess.run(
+            ["git", "-C", ENGINE_DIR, "push", "--quiet", "origin", "main"],
+            env=env_git, capture_output=True, text=True)
+        if push.returncode == 0:
+            log("[runner] ledger persisted to private repo")
+            return
+        log(f"[runner] push rejected (attempt {attempt + 1}) — rebasing")
+        subprocess.run(["git", "-C", ENGINE_DIR, "add", "-f",
+                        "live/state.json"], check=True)
+        rebase = subprocess.run(
+            ["git", "-C", ENGINE_DIR, "pull", "--rebase", "-q", "origin",
+             "main"], env=env_git, capture_output=True, text=True)
+        if rebase.returncode != 0:
+            log("[runner] rebase failed — "
+                + (rebase.stderr or "").strip()[-200:])
+            subprocess.run(["git", "-C", ENGINE_DIR, "rebase", "--abort"],
+                           env=env_git, capture_output=True)
+    log("[runner] ledger push failed after retries")
 
 
 def _git_env(token: str) -> dict:
