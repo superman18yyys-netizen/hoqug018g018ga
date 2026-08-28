@@ -90,29 +90,36 @@ def clone_engine() -> None:
          f"https://github.com/{ATHENA_REPO}.git", ENGINE_DIR],
         env=env, check=True)
     log("[runner] engine repo synced")
+    reqs = os.path.join(ENGINE_DIR, "live", "requirements.txt")
+    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet",
+                    "-r", reqs], check=True)
+    log("[runner] engine deps installed")
 
 
-def run_engine() -> None:
+def run_engine() -> int:
     cfg = json.load(open(os.path.join(ENGINE_DIR, "live", "config.json")))
     minutes = int(cfg.get("run_minutes", 215))
-    env = dict(os.environ)
     proc = subprocess.Popen(
         [sys.executable, "engine.py"],
         cwd=os.path.join(ENGINE_DIR, "live"),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        env=env)
-    deadline = time.time() + (minutes + 20) * 60
+        env=dict(os.environ))
     assert proc.stdout is not None
+    tail: list[str] = []
     for line in proc.stdout:
         line = line.rstrip()
+        tail.append(line)
+        tail = tail[-25:]
         if line.startswith("[engine]"):
             log(line)
-    try:
-        proc.wait(timeout=max(60, deadline - time.time()))
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        log("[runner] engine hit hard timeout — killed")
-    log(f"[runner] engine finished rc={proc.returncode}")
+    proc.wait()
+    if proc.returncode != 0:
+        log("[runner] engine crashed — last output:")
+        for line in tail:
+            log(f"  | {line}")
+    else:
+        log(f"[runner] engine finished rc=0")
+    return proc.returncode
 
 
 def persist_state() -> None:
@@ -183,8 +190,14 @@ def main() -> None:
     if event in ("schedule", "repository_dispatch") and already_running():
         return
     clone_engine()
-    run_engine()
+    rc = run_engine()
     persist_state()
+    if rc != 0:
+        # engine failed: do NOT chain-respawn (runaway loop guard).
+        # the */30 schedule watchdog revives the chain instead.
+        log("[runner] session ended with engine failure — watchdog "
+            "will retry")
+        return
     db = os.path.join(ENGINE_DIR, "data", "athena_merged.db")
     if os.path.exists(db) and os.environ.get("SHOWCASE", "1") == "1":
         r = subprocess.run(
