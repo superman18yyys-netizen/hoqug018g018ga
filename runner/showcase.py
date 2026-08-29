@@ -89,7 +89,7 @@ def chart(rows: list[tuple], coin: str, o7: dict, path: str) -> None:
 
 
 def main() -> None:
-    db = sys.argv[1] if len(sys.argv) > 1 else "data/athena_merged.db"
+    db = sys.argv[1] if len(sys.argv) > 1 else "data/candles.db"
     charts = os.path.join(ROOT, "charts")
     os.makedirs(charts, exist_ok=True)
     table = ["| Pair | 24h oracle | 7d oracle | 7d buy&hold | oracle window |",

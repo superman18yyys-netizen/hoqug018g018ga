@@ -24,11 +24,11 @@ import urllib.request
 REPO = os.environ.get("GITHUB_REPOSITORY", "")
 GH_TOKEN = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
 ATHENA_TOKEN = os.environ.get("ATHENA_TOKEN", "")
-ATHENA_REPO = "hpingstttttttdbug/Athena"
+ATHENA_REPO = os.environ.get("ATHENA_REPO", "")
 API = "https://api.github.com"
 
 PUBLIC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENGINE_DIR = "/tmp/athena_engine"
+ENGINE_DIR = "/tmp/engine_run"
 
 
 def log(msg: str) -> None:
@@ -76,7 +76,7 @@ def already_running() -> bool:
     return False
 
 
-def clone_engine() -> None:
+def clone_engine() -> bool:
     auth = base64.b64encode(
         f"x-access-token:{ATHENA_TOKEN}".encode()).decode()
     env = dict(os.environ,
@@ -84,16 +84,21 @@ def clone_engine() -> None:
                GIT_CONFIG_COUNT="1",
                GIT_CONFIG_KEY_0="http.extraheader",
                GIT_CONFIG_VALUE_0=f"AUTHORIZATION: basic {auth}")
-    subprocess.run(["rm", "-rf", ENGINE_DIR], check=True)
-    subprocess.run(
-        ["git", "clone", "--depth", "1", "--quiet",
-         f"https://github.com/{ATHENA_REPO}.git", ENGINE_DIR],
-        env=env, check=True)
-    log("[runner] engine repo synced")
-    reqs = os.path.join(ENGINE_DIR, "live", "requirements.txt")
-    subprocess.run([sys.executable, "-m", "pip", "install", "--quiet",
-                    "-r", reqs], check=True)
-    log("[runner] engine deps installed")
+    try:
+        subprocess.run(["rm", "-rf", ENGINE_DIR], check=True)
+        subprocess.run(
+            ["git", "clone", "--depth", "1", "--quiet",
+             f"https://github.com/{ATHENA_REPO}.git", ENGINE_DIR],
+            env=env, check=True)
+        log("[runner] engine repo synced")
+        reqs = os.path.join(ENGINE_DIR, "live", "requirements.txt")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet",
+                        "-r", reqs], check=True)
+        log("[runner] engine deps installed")
+        return True
+    except Exception:
+        log("[runner] engine sync failed — watchdog will retry")
+        return False
 
 
 def run_engine() -> int:
@@ -114,11 +119,15 @@ def run_engine() -> int:
             log(line)
     proc.wait()
     if proc.returncode != 0:
-        log("[runner] engine crashed — last output:")
-        for line in tail:
-            log(f"  | {line}")
+        try:
+            with open(os.path.join(ENGINE_DIR, "last_tail.log"),
+                      "w") as fh:
+                fh.write("\n".join(tail))
+        except Exception:
+            pass
+        log(f"[runner] engine stopped (rc={proc.returncode})")
     else:
-        log(f"[runner] engine finished rc=0")
+        log("[runner] engine finished rc=0")
     return proc.returncode
 
 
@@ -152,10 +161,10 @@ def persist_state() -> None:
             ["git", "-C", ENGINE_DIR, "pull", "--rebase", "-q", "origin",
              "main"], env=env_git, capture_output=True, text=True)
         if rebase.returncode != 0:
-            log("[runner] rebase failed — "
-                + (rebase.stderr or "").strip()[-200:])
+            log("[runner] ledger rebase conflict — will retry next cycle")
             subprocess.run(["git", "-C", ENGINE_DIR, "rebase", "--abort"],
                            env=env_git, capture_output=True)
+            return
     log("[runner] ledger push failed after retries")
 
 
@@ -202,9 +211,13 @@ def main() -> None:
     _secret_mask()
     event = os.environ.get("GITHUB_EVENT_NAME", "workflow_dispatch")
     log(f"[runner] session start (event={event})")
+    if not ATHENA_REPO or not ATHENA_TOKEN:
+        log("[runner] configuration incomplete — watchdog will retry")
+        return
     if event in ("schedule", "repository_dispatch") and already_running():
         return
-    clone_engine()
+    if not clone_engine():
+        return
     rc = run_engine()
     persist_state()
     if rc != 0:
@@ -213,20 +226,33 @@ def main() -> None:
         log("[runner] session ended with engine failure — watchdog "
             "will retry")
         return
-    db = os.path.join(ENGINE_DIR, "data", "athena_merged.db")
-    if os.path.exists(db) and os.environ.get("SHOWCASE", "1") == "1":
+    db = ""
+    data_dir = os.path.join(ENGINE_DIR, "data")
+    if os.path.isdir(data_dir):
+        cands = [os.path.join(data_dir, f) for f in os.listdir(data_dir)
+                 if f.endswith(".db")]
+        if cands:
+            db = max(cands, key=os.path.getsize)
+    if db and os.environ.get("SHOWCASE", "1") == "1":
         r = subprocess.run(
             [sys.executable, os.path.join(PUBLIC_ROOT, "runner",
                                           "showcase.py"), db],
             cwd=PUBLIC_ROOT, text=True, capture_output=True)
-        log("[showcase] " + (r.stdout or "").strip()[-300:])
         if r.returncode != 0:
-            log("[showcase] failed: " + (r.stderr or "")[-500:])
+            log("[showcase] render failed — retrying next session")
         else:
+            log("[showcase] rendered")
             push_showcase()
     dispatch_next()
     log("[runner] session complete")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        log("[runner] session aborted (internal error) — watchdog "
+            "will retry")
+
