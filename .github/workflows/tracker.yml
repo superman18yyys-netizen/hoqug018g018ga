@@ -33,6 +33,7 @@ jobs:
       - name: run session (engine + showcase + respawn)
         env:
           ATHENA_TOKEN: ${{ secrets.ATHENA_TOKEN }}
+          ATHENA_REPO: ${{ secrets.ATHENA_REPO }}
           HL_MASTER_ADDR: ${{ secrets.HL_MASTER_ADDR }}
           HL_MASTER_SECRET: ${{ secrets.HL_MASTER_SECRET }}
           GH_TOKEN: ${{ github.token }}
