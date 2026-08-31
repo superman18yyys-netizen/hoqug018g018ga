@@ -227,17 +227,27 @@ def _data_watchdog() -> None:
     import time as _t
 
     def _once():
-        for _ in range(30):
+        last = -1
+        stable = 0
+        for _ in range(40):
             db = os.path.join(ENGINE_DIR, "data", "athena_merged.db")
-            if (os.path.exists(db)
-                    and os.path.getsize(db) > 5 * 1024 * 1024):
-                try:
-                    persist_data()
-                except Exception as e:
-                    log(f"[runner] data snapshot failed: {e}")
-                return
+            if os.path.exists(db):
+                sz = os.path.getsize(db)
+                if sz > 5 * 1024 * 1024:
+                    if sz == last:
+                        stable += 1
+                    else:
+                        stable = 0
+                    last = sz
+                    if stable >= 3:
+                        # size flat for 3 min — the history backfill is done
+                        try:
+                            persist_data()
+                        except Exception as e:
+                            log(f"[runner] data snapshot failed: {e}")
+                        return
             _t.sleep(60)
-        log("[runner] data watchdog gave up (no DB)")
+        log("[runner] data watchdog gave up (DB never stabilized)")
 
     threading.Thread(target=_once, daemon=True).start()
 
@@ -295,6 +305,10 @@ def main() -> None:
     _data_watchdog()
     rc = run_engine()
     persist_state()
+    try:
+        persist_data()
+    except Exception as e:
+        log(f"[runner] end-of-session data snapshot failed: {e}")
     if rc != 0:
         # engine failed: do NOT chain-respawn (runaway loop guard).
         # the */30 schedule watchdog revives the chain instead.
