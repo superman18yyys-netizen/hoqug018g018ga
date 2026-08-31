@@ -168,6 +168,80 @@ def persist_state() -> None:
     log("[runner] ledger push failed after retries")
 
 
+def persist_data() -> None:
+    """Snapshot the engine's fresh candle DB into the private repo so the
+    lab benchmark can walk windows that end at the newest bar."""
+    db = os.path.join(ENGINE_DIR, "live", "athena_merged.db")
+    if not os.path.exists(db) or os.path.getsize(db) < 5 * 1024 * 1024:
+        log("[runner] candle DB not ready for snapshot")
+        return
+    import gzip
+    gz = db + ".gz"
+    try:
+        with open(db, "rb") as fin, gzip.open(gz, "wb", compresslevel=6) as fout:
+            while True:
+                chunk = fin.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                fout.write(chunk)
+    except Exception as e:
+        log(f"[runner] candle DB compress failed: {e}")
+        return
+    env_git = _git_env(ATHENA_TOKEN)
+    subprocess.run(["git", "-C", ENGINE_DIR, "add", "-f",
+                    "live/athena_merged.db.gz"], check=True)
+    staged = subprocess.run(
+        ["git", "-C", ENGINE_DIR, "diff", "--cached", "--quiet"],
+        capture_output=True).returncode != 0
+    if not staged:
+        log("[runner] candle DB unchanged")
+        return
+    subprocess.run(["git", "-C", ENGINE_DIR, "commit", "-q", "-m",
+                    "candle snapshot"], env=env_git, check=True)
+    for attempt in range(3):
+        push = subprocess.run(
+            ["git", "-C", ENGINE_DIR, "push", "--quiet", "origin", "main"],
+            env=env_git, capture_output=True, text=True)
+        if push.returncode == 0:
+            n_mb = os.path.getsize(gz) / 1e6
+            log(f"[runner] candle DB snapshot persisted ({n_mb:.1f} MB gz)")
+            return
+        log(f"[runner] data push rejected (attempt {attempt + 1}) — rebasing")
+        subprocess.run(["git", "-C", ENGINE_DIR, "add", "-f",
+                        "live/athena_merged.db.gz"], check=True)
+        rebase = subprocess.run(
+            ["git", "-C", ENGINE_DIR, "pull", "--rebase", "-q", "origin",
+             "main"], env=env_git, capture_output=True, text=True)
+        if rebase.returncode != 0:
+            subprocess.run(["git", "-C", ENGINE_DIR, "rebase", "--abort"],
+                           capture_output=True)
+            log("[runner] data rebase conflict — skipped this session")
+            return
+    log("[runner] candle DB push failed after retries")
+
+
+def _data_watchdog() -> None:
+    """Push one candle snapshot ~12 min into the session (data is fresh
+    after the engine's first cycles) without waiting for session end."""
+    import threading
+    import time as _t
+
+    def _once():
+        for _ in range(30):
+            db = os.path.join(ENGINE_DIR, "live", "athena_merged.db")
+            if (os.path.exists(db)
+                    and os.path.getsize(db) > 5 * 1024 * 1024):
+                try:
+                    persist_data()
+                except Exception as e:
+                    log(f"[runner] data snapshot failed: {e}")
+                return
+            _t.sleep(60)
+        log("[runner] data watchdog gave up (no DB)")
+
+    threading.Thread(target=_once, daemon=True).start()
+
+
 def _git_env(token: str) -> dict:
     auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     return dict(os.environ,
@@ -218,6 +292,7 @@ def main() -> None:
         return
     if not clone_engine():
         return
+    _data_watchdog()
     rc = run_engine()
     persist_state()
     if rc != 0:
