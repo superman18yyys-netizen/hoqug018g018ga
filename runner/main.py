@@ -176,7 +176,7 @@ def persist_data() -> None:
         log("[runner] candle DB not ready for snapshot")
         return
     import gzip
-    gz = db + ".gz"
+    gz = os.path.join(ENGINE_DIR, "live", "athena_merged.db.gz")
     try:
         with open(db, "rb") as fin, gzip.open(gz, "wb", compresslevel=6) as fout:
             while True:
