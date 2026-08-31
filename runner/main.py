@@ -171,7 +171,7 @@ def persist_state() -> None:
 def persist_data() -> None:
     """Snapshot the engine's fresh candle DB into the private repo so the
     lab benchmark can walk windows that end at the newest bar."""
-    db = os.path.join(ENGINE_DIR, "live", "athena_merged.db")
+    db = os.path.join(ENGINE_DIR, "data", "athena_merged.db")
     if not os.path.exists(db) or os.path.getsize(db) < 5 * 1024 * 1024:
         log("[runner] candle DB not ready for snapshot")
         return
@@ -228,7 +228,7 @@ def _data_watchdog() -> None:
 
     def _once():
         for _ in range(30):
-            db = os.path.join(ENGINE_DIR, "live", "athena_merged.db")
+            db = os.path.join(ENGINE_DIR, "data", "athena_merged.db")
             if (os.path.exists(db)
                     and os.path.getsize(db) > 5 * 1024 * 1024):
                 try:
