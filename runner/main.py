@@ -306,6 +306,23 @@ def main() -> None:
         return
     if not clone_engine():
         return
+    # hydrate the workspace candle DB from the repo snapshot so the
+    # engine only tops up recent bars instead of backfilling 180d
+    gz = os.path.join(ENGINE_DIR, "live", "athena_merged.db.gz")
+    dbout = os.path.join(ENGINE_DIR, "data", "athena_merged.db")
+    if os.path.exists(gz) and not os.path.exists(dbout):
+        try:
+            os.makedirs(os.path.dirname(dbout), exist_ok=True)
+            import gzip as _gz
+            with _gz.open(gz, "rb") as fin, open(dbout, "wb") as fout:
+                while True:
+                    chunk = fin.read(4 * 1024 * 1024)
+                    if not chunk:
+                        break
+                    fout.write(chunk)
+            log("[runner] candle DB hydrated from repo snapshot")
+        except Exception as e:
+            log(f"[runner] DB hydration failed (will backfill): {e}")
     _data_watchdog()
     rc = run_engine()
     persist_state()
