@@ -227,27 +227,31 @@ def _data_watchdog() -> None:
     import time as _t
 
     def _once():
-        last = -1
-        stable = 0
+        import sqlite3 as _sq
+        import time as _clock
+        cutoff = _clock.time() - 12 * 3600
         for _ in range(40):
             db = os.path.join(ENGINE_DIR, "data", "athena_merged.db")
-            if os.path.exists(db):
-                sz = os.path.getsize(db)
-                if sz > 5 * 1024 * 1024:
-                    if sz == last:
-                        stable += 1
-                    else:
-                        stable = 0
-                    last = sz
-                    if stable >= 3:
-                        # size flat for 3 min — the history backfill is done
-                        try:
-                            persist_data()
-                        except Exception as e:
-                            log(f"[runner] data snapshot failed: {e}")
-                        return
+            ready = False
+            if os.path.exists(db) and os.path.getsize(db) > 5 * 1024 * 1024:
+                try:
+                    conn = _sq.connect(db)
+                    mx = conn.execute(
+                        "SELECT MAX(start_ts) FROM candles "
+                        "WHERE granularity='ONE_HOUR'").fetchone()[0]
+                    conn.close()
+                    ready = bool(mx) and mx >= cutoff
+                except Exception:
+                    ready = False
+            if ready:
+                # newest bar within 12h — the history backfill is done
+                try:
+                    persist_data()
+                except Exception as e:
+                    log(f"[runner] data snapshot failed: {e}")
+                return
             _t.sleep(60)
-        log("[runner] data watchdog gave up (DB never stabilized)")
+        log("[runner] data watchdog gave up (backfill never completed)")
 
     threading.Thread(target=_once, daemon=True).start()
 
