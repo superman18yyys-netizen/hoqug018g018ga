@@ -37,7 +37,7 @@ def log(msg: str) -> None:
 
 def _secret_mask() -> None:
     for name in ("ATHENA_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
-                 "HL_MASTER_ADDR", "HL_MASTER_SECRET"):
+                 "HL_MASTER_ADDR", "HL_MASTER_SECRET", "ATHENA_REPO"):
         val = os.environ.get(name, "")
         if val:
             print(f"::add-mask::{val}")
@@ -58,6 +58,58 @@ def api(path: str, method: str = "GET", body: dict | None = None,
             return resp.status, (json.loads(data) if data else {})
     except urllib.error.HTTPError as e:
         return e.code, {}
+
+
+def _sanitize(text: str) -> str:
+    """Strip anything credential-shaped from diagnostic text."""
+    import re
+    text = re.sub(r"(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]+", "[token]", text)
+    text = re.sub(r"x-access-token:[^@\"]+", "[token]", text)
+    text = re.sub(r"AUTHORIZATION: basic [A-Za-z0-9+/=]+", "[auth]", text,
+                  flags=re.IGNORECASE)
+    return text
+
+
+def report_private(message: str) -> None:
+    """Write runner diagnostics into the PRIVATE engine repo.
+
+    Error detail must never reach the public Actions log — it lands
+    here instead (live/runner_status.json), alongside the engine's own
+    cycle-err state reporting.
+    """
+    if not ATHENA_REPO or not ATHENA_TOKEN:
+        return
+    try:
+        import base64
+        import urllib.request
+        from datetime import datetime, timezone
+        url = (f"{API}/repos/{ATHENA_REPO}/contents/"
+               "live/runner_status.json")
+        headers = {"Authorization": f"token {ATHENA_TOKEN}",
+                   "Accept": "application/vnd.github+json",
+                   "Content-Type": "application/json"}
+        entry = {"ts": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"), "message": _sanitize(message)}
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            old = json.loads(base64.b64decode(
+                json.loads(resp.read())["content"]).decode())
+        history = (old.get("history") or [])[-9:]
+        history.append(entry)
+        old["history"] = history
+        old["last"] = entry
+        body = {"message": "runner status",
+                "content": base64.b64encode(json.dumps(
+                    old, indent=1).encode()).decode()}
+        if old.get("sha"):
+            body["sha"] = old["sha"]
+        put = urllib.request.Request(
+            url, data=json.dumps(body).encode(), method="PUT",
+            headers=headers)
+        with urllib.request.urlopen(put, timeout=20):
+            pass
+    except Exception:
+        pass
 
 
 def already_running() -> bool:
@@ -84,21 +136,30 @@ def clone_engine() -> bool:
                GIT_CONFIG_COUNT="1",
                GIT_CONFIG_KEY_0="http.extraheader",
                GIT_CONFIG_VALUE_0=f"AUTHORIZATION: basic {auth}")
+    clone_err = ""
     try:
         subprocess.run(["rm", "-rf", ENGINE_DIR], check=True)
-        subprocess.run(
+        clone = subprocess.run(
             ["git", "clone", "--depth", "1", "--quiet",
              f"https://github.com/{ATHENA_REPO}.git", ENGINE_DIR],
-            env=env, check=True)
+            env=env, check=True, capture_output=True, text=True)
         log("[runner] engine repo synced")
         reqs = os.path.join(ENGINE_DIR, "live", "requirements.txt")
-        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet",
-                        "-r", reqs], check=True)
+        pip = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", "-r", reqs],
+            check=True, capture_output=True, text=True)
         log("[runner] engine deps installed")
         return True
-    except Exception:
-        log("[runner] engine sync failed — watchdog will retry")
-        return False
+    except subprocess.CalledProcessError as e:
+        if e.stderr:
+            clone_err = e.stderr
+    except Exception as e:
+        clone_err = repr(e)
+    # never echo the captured stderr — it can name the private repo;
+    # detail goes to the private repo's runner_status.json instead
+    report_private("engine sync failed\n" + clone_err)
+    log("[runner] engine sync failed — watchdog will retry")
+    return False
 
 
 def run_engine() -> int:
@@ -270,23 +331,28 @@ def _git_env(token: str) -> dict:
 
 
 def push_showcase() -> None:
-    subprocess.run(
-        ["git", "-C", PUBLIC_ROOT, "add", "-A", "README.md", "charts"],
-        check=True)
-    staged = subprocess.run(
-        ["git", "-C", PUBLIC_ROOT, "diff", "--cached", "--quiet"],
-        capture_output=True).returncode != 0
-    if not staged:
-        log("[runner] showcase unchanged")
-        return
-    subprocess.run(["git", "-C", PUBLIC_ROOT, "commit", "-q", "-m",
-                    "oracle showcase update"], env=_git_env(GH_TOKEN),
-                   check=True)
-    subprocess.run(
-        ["git", "-C", PUBLIC_ROOT, "push", "--quiet", "origin",
-         os.environ.get("GITHUB_REF_NAME", "main")],
-        env=_git_env(GH_TOKEN), check=True)
-    log("[runner] showcase pushed")
+    try:
+        subprocess.run(
+            ["git", "-C", PUBLIC_ROOT, "add", "-A", "README.md", "charts"],
+            check=True, capture_output=True, text=True)
+        staged = subprocess.run(
+            ["git", "-C", PUBLIC_ROOT, "diff", "--cached", "--quiet"],
+            capture_output=True).returncode != 0
+        if not staged:
+            log("[runner] showcase unchanged")
+            return
+        subprocess.run(["git", "-C", PUBLIC_ROOT, "commit", "-q", "-m",
+                        "oracle showcase update"], env=_git_env(GH_TOKEN),
+                       check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "-C", PUBLIC_ROOT, "push", "--quiet", "origin",
+             os.environ.get("GITHUB_REF_NAME", "main")],
+            env=_git_env(GH_TOKEN), check=True, capture_output=True,
+            text=True)
+        log("[runner] showcase pushed")
+    except subprocess.CalledProcessError as e:
+        report_private("showcase push failed\n" + (e.stderr or ""))
+        log("[runner] showcase push failed — retrying next session")
 
 
 def dispatch_next() -> None:
