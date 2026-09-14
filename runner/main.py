@@ -410,11 +410,20 @@ def main() -> None:
         if cands:
             db = max(cands, key=os.path.getsize)
     if db and os.environ.get("SHOWCASE", "1") == "1":
-        r = subprocess.run(
-            [sys.executable, os.path.join(PUBLIC_ROOT, "runner",
-                                          "showcase.py"), db],
-            cwd=PUBLIC_ROOT, text=True, capture_output=True)
-        if r.returncode != 0:
+        try:
+            r = subprocess.run(
+                [sys.executable, os.path.join(PUBLIC_ROOT, "runner",
+                                              "showcase.py"), db],
+                cwd=PUBLIC_ROOT, text=True, capture_output=True,
+                timeout=int(os.environ.get("SHOWCASE_TIMEOUT_S", "600")))
+        except subprocess.TimeoutExpired:
+            report_private("showcase render timed out")
+            log("[showcase] render timed out — retrying next session")
+            r = None
+        if r is None:
+            pass
+        elif r.returncode != 0:
+            report_private("showcase render failed\n" + (r.stderr or ""))
             log("[showcase] render failed — retrying next session")
         else:
             log("[showcase] rendered")
