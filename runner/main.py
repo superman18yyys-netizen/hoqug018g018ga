@@ -162,34 +162,93 @@ def clone_engine() -> bool:
     return False
 
 
+def _kill_children(pid: int) -> None:
+    """Reap any process the engine left behind (e.g. spawned watchers).
+
+    A lingering child used to keep the engine's stdout pipe open, which
+    blocked this runner for ~55 min until the job timeout — that dead
+    window is why the app could show a GO verdict for an hour with no
+    trade. We no longer read a pipe (see run_engine) and we still sweep.
+    """
+    try:
+        subprocess.run(["pkill", "-TERM", "-P", str(pid)],
+                       capture_output=True)
+        time.sleep(2)
+        subprocess.run(["pkill", "-KILL", "-P", str(pid)],
+                       capture_output=True)
+    except Exception:
+        pass
+
+
 def run_engine() -> int:
+    """Run the engine session, never blocking on its output pipe.
+
+    Output is redirected to a file that we tail, and the process is
+    hard-bounded by its own run_minutes plus a grace period, so a hung
+    child or a stuck engine can never eat the wrap-up (persist + dispatch).
+    """
     cfg = json.load(open(os.path.join(ENGINE_DIR, "live", "config.json")))
-    minutes = int(cfg.get("run_minutes", 215))
+    minutes = int(cfg.get("run_minutes", 190))
+    grace = int(os.environ.get("ENGINE_GRACE_MIN", "20"))
+    logfile = os.path.join(ENGINE_DIR, "engine_out.log")
+    fh = open(logfile, "w")
     proc = subprocess.Popen(
         [sys.executable, "engine.py"],
         cwd=os.path.join(ENGINE_DIR, "live"),
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        env=dict(os.environ))
-    assert proc.stdout is not None
+        stdout=fh, stderr=subprocess.STDOUT,
+        start_new_session=True, env=dict(os.environ))
+    pos = 0
     tail: list[str] = []
-    for line in proc.stdout:
-        line = line.rstrip()
-        tail.append(line)
-        tail = tail[-25:]
-        if line.startswith("[engine]"):
-            log(line)
-    proc.wait()
-    if proc.returncode != 0:
+    deadline = time.time() + (minutes + grace) * 60
+    overran = False
+    while True:
+        rc = proc.poll()
         try:
-            with open(os.path.join(ENGINE_DIR, "last_tail.log"),
-                      "w") as fh:
-                fh.write("\n".join(tail))
+            with open(logfile) as rf:
+                rf.seek(pos)
+                for line in rf:
+                    line = line.rstrip()
+                    tail.append(line)
+                    tail = tail[-25:]
+                    if line.startswith("[engine]"):
+                        log(line)
+                pos = rf.tell()
         except Exception:
             pass
-        log(f"[runner] engine stopped (rc={proc.returncode})")
+        if rc is not None:
+            break
+        if time.time() >= deadline:
+            overran = True
+            log(f"[runner] engine exceeded {minutes}m budget — terminating")
+            try:
+                proc.terminate()
+                proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            break
+        time.sleep(5)
+    try:
+        fh.close()
+    except Exception:
+        pass
+    _kill_children(proc.pid)
+    rc = proc.returncode
+    if overran:
+        # deliberate stop: the session did its work (state persisted every
+        # cycle), so treat it as a normal end and keep the chain alive
+        log("[runner] engine session closed at budget (rc=%s)" % rc)
+        return 0
+    if rc != 0:
+        try:
+            with open(os.path.join(ENGINE_DIR, "last_tail.log"),
+                      "w") as lf:
+                lf.write("\n".join(tail))
+        except Exception:
+            pass
+        log(f"[runner] engine stopped (rc={rc})")
     else:
         log("[runner] engine finished rc=0")
-    return proc.returncode
+    return rc
 
 
 def persist_state() -> None:
@@ -390,18 +449,25 @@ def main() -> None:
         except Exception as e:
             log(f"[runner] DB hydration failed (will backfill): {e}")
     _data_watchdog()
+    engine_t0 = time.time()
     rc = run_engine()
+    engine_ran = time.time() - engine_t0
     persist_state()
     try:
         persist_data()
     except Exception as e:
         log(f"[runner] end-of-session data snapshot failed: {e}")
-    if rc != 0:
-        # engine failed: do NOT chain-respawn (runaway loop guard).
-        # the */30 schedule watchdog revives the chain instead.
-        log("[runner] session ended with engine failure — watchdog "
-            "will retry")
+    if rc != 0 and engine_ran < 180:
+        # fast failure (<3 min) — likely a real crash loop; do not
+        # chain-respawn, let the */30 watchdog retry
+        log("[runner] engine failed early — watchdog will retry")
         return
+    if rc != 0:
+        # the engine ran for a while and then failed: keep the chain
+        # alive so trading resumes immediately (state is persisted
+        # every cycle, nothing is lost)
+        log(f"[runner] engine failed after {engine_ran/60:.0f}m — "
+            "continuing the chain")
     db = ""
     data_dir = os.path.join(ENGINE_DIR, "data")
     if os.path.isdir(data_dir):
