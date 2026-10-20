@@ -13,23 +13,23 @@ strategy.
 > These numbers are computed with hindsight and are **not investable**.
 > Nothing here is financial advice.
 
-**Last update:** Oct 20 2026 01:53 UTC — 13/13 coins rendered
+**Last update:** Oct 20 2026 05:24 UTC — 13/13 coins rendered
 
 | Pair | 24h oracle | 7d oracle | 7d buy&hold | oracle window |
 |---|---|---|---|---|
-| BTC-USDC | +1.0% | +4.3% | -1.8% | Oct 15 13:00 → Oct 19 07:00 UTC |
-| ETH-USDC | +1.5% | +7.7% | -4.0% | Oct 15 02:00 → Oct 16 11:00 UTC |
-| XRP-USDC | +1.4% | +5.4% | -5.2% | Oct 15 13:00 → Oct 16 11:00 UTC |
-| SOL-USDC | +2.0% | +6.8% | -2.3% | Oct 15 02:00 → Oct 16 11:00 UTC |
-| ZEC-USDC | +5.5% | +16.8% | -5.6% | Oct 15 06:00 → Oct 15 21:00 UTC |
-| ADA-USDC | +2.1% | +8.1% | -8.2% | Oct 15 02:00 → Oct 16 11:00 UTC |
-| XLM-USDC | +1.9% | +5.5% | -8.5% | Oct 15 02:00 → Oct 15 15:00 UTC |
-| LTC-USDC | +2.4% | +7.7% | -3.6% | Oct 15 02:00 → Oct 16 00:00 UTC |
-| LINK-USDC | +2.0% | +8.1% | -7.0% | Oct 15 13:00 → Oct 16 11:00 UTC |
-| NEAR-USDC | +3.0% | +20.3% | -8.5% | Oct 15 13:00 → Oct 15 19:00 UTC |
-| DOGE-USDC | +1.9% | +6.5% | -5.6% | Oct 15 02:00 → Oct 16 11:00 UTC |
-| ONDO-USDC | +2.7% | +13.1% | -9.8% | Oct 15 13:00 → Oct 16 11:00 UTC |
-| SUI-USDC | +3.3% | +10.6% | -5.4% | Oct 15 13:00 → Oct 16 11:00 UTC |
+| BTC-USDC | +1.3% | +4.3% | -1.9% | Oct 15 13:00 → Oct 19 07:00 UTC |
+| ETH-USDC | +1.9% | +7.7% | -4.7% | Oct 15 02:00 → Oct 16 11:00 UTC |
+| XRP-USDC | +1.7% | +5.4% | -5.1% | Oct 15 13:00 → Oct 16 11:00 UTC |
+| SOL-USDC | +2.0% | +6.8% | -3.0% | Oct 15 02:00 → Oct 16 11:00 UTC |
+| ZEC-USDC | +5.5% | +16.8% | -5.3% | Oct 15 06:00 → Oct 15 21:00 UTC |
+| ADA-USDC | +2.1% | +8.1% | -8.9% | Oct 15 02:00 → Oct 16 11:00 UTC |
+| XLM-USDC | +2.0% | +5.5% | -8.8% | Oct 15 02:00 → Oct 15 15:00 UTC |
+| LTC-USDC | +2.0% | +7.7% | -3.7% | Oct 15 02:00 → Oct 16 00:00 UTC |
+| LINK-USDC | +2.4% | +8.1% | -8.5% | Oct 15 13:00 → Oct 16 11:00 UTC |
+| NEAR-USDC | +2.8% | +20.3% | -9.5% | Oct 15 13:00 → Oct 15 19:00 UTC |
+| DOGE-USDC | +1.9% | +6.5% | -6.4% | Oct 15 02:00 → Oct 16 11:00 UTC |
+| ONDO-USDC | +4.2% | +13.1% | -9.6% | Oct 15 13:00 → Oct 16 11:00 UTC |
+| SUI-USDC | +3.3% | +10.6% | -7.0% | Oct 15 13:00 → Oct 16 11:00 UTC |
 
 ## Charts (7-day window, oracle entry/exit marked)
 
