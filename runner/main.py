@@ -258,7 +258,7 @@ def persist_state() -> None:
         return
     env_git = _git_env(ATHENA_TOKEN)
     subprocess.run(["git", "-C", ENGINE_DIR, "add", "-f",
-                    "live/state.json"], check=True)
+                    "live/state.json", "live/models"], check=True)
     staged = subprocess.run(
         ["git", "-C", ENGINE_DIR, "diff", "--cached", "--quiet"],
         capture_output=True).returncode != 0
@@ -276,7 +276,7 @@ def persist_state() -> None:
             return
         log(f"[runner] push rejected (attempt {attempt + 1}) — rebasing")
         subprocess.run(["git", "-C", ENGINE_DIR, "add", "-f",
-                        "live/state.json"], check=True)
+                        "live/state.json", "live/models"], check=True)
         rebase = subprocess.run(
             ["git", "-C", ENGINE_DIR, "pull", "--rebase", "-q", "origin",
              "main"], env=env_git, capture_output=True, text=True)
