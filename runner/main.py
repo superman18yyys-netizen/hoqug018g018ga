@@ -209,9 +209,7 @@ def run_engine() -> int:
                 for line in rf:
                     line = line.rstrip()
                     tail.append(line)
-                    tail = tail[-25:]
-                    if line.startswith("[engine]"):
-                        log(line)
+                    tail = tail[-200:]
                 pos = rf.tell()
         except Exception:
             pass
@@ -236,7 +234,8 @@ def run_engine() -> int:
     if overran:
         # deliberate stop: the session did its work (state persisted every
         # cycle), so treat it as a normal end and keep the chain alive
-        log("[runner] engine session closed at budget (rc=%s)" % rc)
+        report_private("engine tail:\n" + "\n".join(tail))
+        log("[runner] engine session closed at budget (rc=%s); output private" % rc)
         return 0
     if rc != 0:
         try:
@@ -245,9 +244,11 @@ def run_engine() -> int:
                 lf.write("\n".join(tail))
         except Exception:
             pass
-        log(f"[runner] engine stopped (rc={rc})")
+        report_private("engine tail:\n" + "\n".join(tail))
+        log(f"[runner] engine stopped (rc={rc}); output private")
     else:
-        log("[runner] engine finished rc=0")
+        report_private("engine tail:\n" + "\n".join(tail))
+        log("[runner] engine finished rc=0; output private")
     return rc
 
 
